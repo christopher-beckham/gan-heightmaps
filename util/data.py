@@ -272,7 +272,7 @@ def _get_slices(length, bs):
         b += 1
     return slices
 
-def iterate_hdf5(imgen=None, X_mean=0., Y_mean=0., X_std=1., Y_std=1.):
+def iterate_hdf5(imgen=None, is_a_binary=True, is_b_binary=False):
     def _iterate_hdf5(X_arr, y_arr, bs, rnd_state=np.random.RandomState(0)):
         assert X_arr.shape[0] == y_arr.shape[0]
         while True:
@@ -284,9 +284,9 @@ def iterate_hdf5(imgen=None, X_mean=0., Y_mean=0., X_std=1., Y_std=1.):
                 # TODO: only compatible with theano
                 this_X = this_X.swapaxes(3,2).swapaxes(2,1)
                 this_Y = this_Y.swapaxes(3,2).swapaxes(2,1)
-                # normalise
-                this_X = (this_X - X_mean) / X_std
-                this_Y = (this_Y - Y_mean) / Y_std
+                # normalise A and B
+                this_X = this_X / 255.0 if is_a_binary else (this_X - 127.5) / 127.5
+                this_Y = this_Y / 255.0 if is_b_binary else (this_Y - 127.5) / 127.5
                 # if we passed an image generator, augment the images
                 if imgen != None:
                     seed = rnd_state.randint(0, 100000)
@@ -297,9 +297,38 @@ def iterate_hdf5(imgen=None, X_mean=0., Y_mean=0., X_std=1., Y_std=1.):
 
 # this just wraps the above functional iterator
 class Hdf5Iterator():
-    def __init__(self, X, y, bs, imgen, X_mean=0., Y_mean=0., X_std=1., Y_std=1.):
-        self.fn = iterate_hdf5(imgen, X_mean, Y_mean, X_std, Y_std)(X, y, bs)
+    def __init__(self, X, y, bs, imgen, is_a_binary, is_b_binary):
+        """
+        :X:
+        :y:
+        :bs:
+        :imgen:
+        :is_a_binary: if the A image is binary, we have to divide
+         by 255, otherwise we scale to [-1, 1] using tanh scaling
+        :is_b_binary: same as is_a_binary
+        """
+        assert X.shape[0] == y.shape[0]
+        self.fn = iterate_hdf5(imgen, is_a_binary, is_b_binary)(X, y, bs)
+        self.N = X.shape[0]
     def __iter__(self):
         return self
     def next(self):
         return self.fn.next()
+
+if __name__ == '__main__':
+
+    from keras.preprocessing.image import ImageDataGenerator
+    import h5py
+    
+    dataset = h5py.File("/data/lisa/data/cbeckham/textures_v2_90-10.h5","r")
+    imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
+    #N = dataset['xt'].shape[0]
+    it_train = Hdf5Iterator(X=dataset['xt'][0:10],
+                            y=dataset['yt'][0:10],
+                            bs=2,
+                            imgen=imgen,
+                            is_a_binary=True,
+                            is_b_binary=False)
+
+    import pdb
+    pdb.set_trace()

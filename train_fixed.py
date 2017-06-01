@@ -8,59 +8,14 @@ import models as m
 
 from tqdm import tqdm
 from keras.optimizers import Adam
+from keras.preprocessing.image import ImageDataGenerator
 from util.data import TwoImageIterator, iterate_hdf5, Hdf5Iterator
 from util.util import MyDict, log, save_weights, load_weights, load_losses, create_expt_dir
 
 import h5py
+from time import time
 
-def print_help():
-    """Print how to use this script."""
-    print "Usage:"
-    print "train.py [--help] [--nfd] [--nfatob] [--alpha] [--epochs] [batch_size] " \
-          "[--save_every] [--lr] [--beta_1] [--continue_train] [--log_dir]" \
-          "[--expt_name] [--base_dir] [--train_dir] [--val_dir] [--train_samples] " \
-          "[--val_samples] [--load_to_memory] [--a_ch] [--b_ch] [--is_a_binary] " \
-          "[--is_b_binary] [--is_a_grayscale] [--is_b_grayscale] [--target_size] " \
-          "[--rotation_range] [--height_shift_range] [--width_shift_range] " \
-          "[--horizontal_flip] [--vertical_flip] [--zoom_range]"
-    print "--nfd: Number of filters of the first layer of the discriminator."
-    print "--nfatob: Number of filters of the first layer of the AtoB model."
-    print "--alpha: The weight of the reconstruction loss of the AtoB model."
-    print "--epochs: Number of epochs to train the model."
-    print "--batch_size: the size of the batch to train."
-    print "--save_every: Save results every 'save_every' epochs on the log folder."
-    print "--lr: The learning rate to train the models."
-    print "--beta_1: The beta_1 value of the Adam optimizer."
-    print "--continue_train: If it should continue the training from the last checkpoint."
-    print "--log_dir: The directory to place the logs."
-    print "--expt_name: The name of the experiment. Saves the logs into a folder with this name."
-    print "--base_dir: Directory that contains the data."
-    print "--train_dir: Directory inside base_dir that contains training data. " \
-          "Must contain an A and B folder."
-    print "--val_dir: Directory inside base_dir that contains validation data. " \
-          "Must contain an A and B folder."
-    print "--train_samples: The number of training samples. Set -1 to be the same as training examples."
-    print "--val_samples: The number of validation samples. Set -1 to be the same as validation examples."
-    print "--load_to_memory: Whether to load images into memory or read from the filesystem."
-    print "--a_ch: Number of channels of images A."
-    print "--b_ch: Number of channels of images B."
-    print "--is_a_binary: If A is binary, its values will be 0 or 1. A threshold of 0.5 is used."
-    print "--is_b_binary: If B is binary, the last layer of the atob model is " \
-          "followed by a sigmoid. Otherwise, a tanh is used. When the sigmoid is " \
-          "used, the binary crossentropy loss is used. For the tanh, the L1 is used. Also, " \
-          "its values will be 0 or 1. A threshold of 0.5 is used."
-    print "--is_a_grayscale: If A images should only have one channel. If they are color images, " \
-          "they are converted to grayscale."
-    print "--is_b_grayscale: If B images should only have one channel. If they are color images, " \
-          "they are converted to grayscale."
-    print "--target_size: The size of the images loaded by the iterator. THIS DOES NOT CHANGE THE MODELS. " \
-          "If you want to accept images of different sizes you will need to update the models.py files."
-    print "--rotation_range: The range to rotate training images for dataset augmentation."
-    print "--height_shift_range: Percentage of height of the image to translate for dataset augmentation."
-    print "--width_shift_range: Percentage of width of the image to translate for dataset augmentation."
-    print "--horizontal_flip: If true performs random horizontal flips on the train set."
-    print "--vertical_flip: If true performs random vertical flips on the train set."
-    print "--zoom_range: Defines the range to scale the image for dataset augmentation."
+from collections import OrderedDict
 
 def discriminator_generator(it, atob, dout_size):
     """
@@ -101,7 +56,6 @@ def train_discriminator(d, it, steps_per_epoch):
         losses.append(d.train_on_batch(x,y))
     return np.mean(losses)
 
-
 def pix2pix_generator(it, dout_size):
     """
     Generate data for the generator network.
@@ -123,10 +77,8 @@ def train_pix2pix(pix2pix, it, steps_per_epoch):
     losses = []
     for b in range(steps_per_epoch):
         x, y = next(it)
-        print x, y
         losses.append(pix2pix.train_on_batch(x,y))
     return np.mean(losses)
-    
 
 def evaluate_generator(fn, it, steps_per_epoch):
     """
@@ -246,32 +198,42 @@ def train(models, it_train, it_val, params):
     # Create the experiment folder and save the parameters
     create_expt_dir(params)
 
+    # save model graphs
+    from keras.utils import plot_model
+    for key in models:
+        plot_model(models[key], show_shapes=True, to_file="%s/%s/graph_%s.png" % (params.log_dir, params.expt_name, key))
+    
     # Get the output shape of the discriminator
     dout_size = d.output_shape[-2:]
     # Define the data generators
     generators = generators_creation(it_train, it_val, models, dout_size)
 
     # Define the number of samples to use on each training epoch
-    train_samples = params.train_samples
-    if params.train_samples == -1:
-        params.train_samples = it_train.N
+    params.train_samples = it_train.N
     train_batches_per_epoch = params.train_samples // params.batch_size
 
     # Define the number of samples to use for validation
-    val_samples = params.val_samples
-    if val_samples == -1:
-        params.val_samples = it_val.N
+    params.val_samples = it_val.N
     val_batches_per_epoch = params.val_samples // params.batch_size
 
-    print "train batches per epoch:", train_batches_per_epoch
-    print "val batches per epoch:", val_batches_per_epoch
-
-    losses = {'p2p': [], 'd': [], 'p2p_val': [], 'd_val': []}
-    if params.continue_train:
-        losses = load_losses(log_dir=params.log_dir, expt_name=params.expt_name)
-
+    keys = ["epoch", "p2p", "d", "p2p_val", "d_val","time"]
+    losses = OrderedDict({})
+    for key in keys: losses[key] = []
+    results_filename = "%s/%s/results.txt" % (params.log_dir, params.expt_name)
+    results_flag = "a" if params.continue_train else "wb"
+    file_handles = {
+        'results': open(results_filename, results_flag)
+    }
+    if results_flag == "wb":
+        file_handles['results'].write( ",".join(losses.keys()) + "\n" )
+        file_handles['results'].flush()
+    
+    #if params.continue_train:
+    #    losses = load_losses(log_dir=params.log_dir, expt_name=params.expt_name)
+        
     for e in range(params.epochs):
-        print "epoch %i" % (e+1)
+        t0 = time()
+        losses["epoch"].append(e+1)
 
         #for b in range(train_batches_per_epoch):
         train_iteration(models, generators, losses, params)
@@ -279,11 +241,12 @@ def train(models, it_train, it_val, params):
         # Evaluate how the models is doing on the validation set.
         evaluate(models, generators, losses, params)
 
+        losses["time"].append(time()-t0)
+        
         if (e + 1) % params.save_every == 0:
             save_weights(models, log_dir=params.log_dir, expt_name=params.expt_name)
-            log(losses, models.atob, it_val, log_dir=params.log_dir, expt_name=params.expt_name,
+            log(file_handles, losses, models.atob, it_val, log_dir=params.log_dir, expt_name=params.expt_name,
                 is_a_binary=params.is_a_binary, is_b_binary=params.is_b_binary)
-
 
 if __name__ == '__main__':
     a = sys.argv[1:]
@@ -303,13 +266,9 @@ if __name__ == '__main__':
         # File system
         'log_dir': 'log',  # Directory to log
         'expt_name': None,  # The name of the experiment. Saves the logs into a folder with this name
-        'base_dir': 'data/unet_segmentations_binary',  # Directory that contains the data
-        'train_dir': 'train',  # Directory inside base_dir that contains training data
-        'val_dir': 'val',  # Directory inside base_dir that contains validation data
-        'train_samples': -1,  # The number of training samples. Set -1 to be the same as training examples
-        'val_samples': -1,  # The number of validation samples. Set -1 to be the same as validation examples
         'load_to_memory': True,  # Whether to load the images into memory
         # Image
+        'dataset': "/data/lisa/data/cbeckham/textures_v2_90-10.h5", # HDF5 file for training/test data
         'a_ch': 1,  # Number of channels of images A
         'b_ch': 3,  # Number of channels of images B
         'is_a_binary': True,  # If A is binary, its values will be either 0 or 1
@@ -317,12 +276,6 @@ if __name__ == '__main__':
         'is_a_grayscale': True,  # If A is grayscale, the image will only have one channel
         'is_b_grayscale': False,  # If B is grayscale, the image will only have one channel
         'target_size': 512,  # The size of the images loaded by the iterator. DOES NOT CHANGE THE MODELS
-        'rotation_range': 0.,  # The range to rotate training images for dataset augmentation
-        'height_shift_range': 0.,  # Percentage of height of the image to translate for dataset augmentation
-        'width_shift_range': 0.,  # Percentage of width of the image to translate for dataset augmentation
-        'horizontal_flip': False,  # If true performs random horizontal flips on the train set
-        'vertical_flip': False,  # If true performs random vertical flips on the train set
-        'zoom_range': 0.,  # Defines the range to scale the image for dataset augmentation
     })
 
     param_names = [k + '=' for k in params.keys()] + ['help']
@@ -330,7 +283,8 @@ if __name__ == '__main__':
     try:
         opts, args = getopt.getopt(a, '', param_names)
     except getopt.GetoptError:
-        print_help()
+        #print_help()
+        print "parsing error!"
         sys.exit()
 
     for opt, arg in opts:
@@ -338,17 +292,15 @@ if __name__ == '__main__':
             print_help()
             sys.exit()
         elif opt in ('--nfatob', '--nfd', '--a_ch', '--b_ch', '--epochs', '--batch_size',
-                     '--save_every', '--train_samples', '--val_samples',
+                     '--save_every',
                      '--target_size'):
             params[opt[2:]] = int(arg)
-        elif opt in ('--lr', '--beta_1', '--rotation_range', '--height_shift_range',
-                     '--width_shift_range', '--zoom_range', '--alpha'):
+        elif opt in ('--lr', '--beta_1', '--alpha'):
             params[opt[2:]] = float(arg)
         elif opt in ('--is_a_binary', '--is_b_binary', '--is_a_grayscale', '--is_b_grayscale',
-                     '--continue_train', '--horizontal_flip', '--vertical_flip',
-                     '--load_to_memory'):
+                     '--continue_train'):
             params[opt[2:]] = True if arg == 'True' else False
-        elif opt in ('--base_dir', '--train_dir', '--val_dir', '--expt_name', '--log_dir'):
+        elif opt in ('--base_dir', '--train_dir', '--val_dir', '--expt_name', '--log_dir', '--dataset'):
             params[opt[2:]] = arg
 
     print "params:"
@@ -356,78 +308,34 @@ if __name__ == '__main__':
             
     dopt = Adam(lr=params.lr, beta_1=params.beta_1)
 
+    print "defining networks..."
+    
     # Define the U-Net generator
     unet = m.g_unet(params.a_ch, params.b_ch, params.nfatob,
                     batch_size=params.batch_size, is_binary=params.is_b_binary)
-    "unet summary:"
-    unet.summary()
 
     # Define the discriminator
     d = m.discriminator(params.a_ch, params.b_ch, params.nfd, opt=dopt)
-    "discriminator summary:"
-    d.summary()
 
     if params.continue_train:
+        print "loading weights..."
         load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
-
-    ts = params.target_size
-    train_dir = os.path.join(params.base_dir, params.train_dir)
-    """
-    it_train = TwoImageIterator(train_dir,  is_a_binary=params.is_a_binary,
-                                is_a_grayscale=params.is_a_grayscale,
-                                is_b_grayscale=params.is_b_grayscale,
-                                is_b_binary=params.is_b_binary,
-                                batch_size=params.batch_size,
-                                load_to_memory=params.load_to_memory,
-                                rotation_range=params.rotation_range,
-                                height_shift_range=params.height_shift_range,
-                                width_shift_range=params.height_shift_range,
-                                zoom_range=params.zoom_range,
-                                horizontal_flip=params.horizontal_flip,
-                                vertical_flip=params.vertical_flip,
-                                target_size=(ts, ts))
-    val_dir = os.path.join(params.base_dir, params.val_dir)
-    it_val = TwoImageIterator(val_dir,  is_a_binary=params.is_a_binary,
-                              is_b_binary=params.is_b_binary,
-                              is_a_grayscale=params.is_a_grayscale,
-                              is_b_grayscale=params.is_b_grayscale,
-                              batch_size=params.batch_size,
-                              load_to_memory=params.load_to_memory,
-                              target_size=(ts, ts))
-    """
     
-    """
-    from keras.preprocessing.image import NumpyArrayIterator, ImageDataGenerator
-    it_train = NumpyArrayIterator( np.ones((10,1,512,512)).astype("float32"), np.ones((10,3,512,512)).astype("float32"), ImageDataGenerator(), batch_size=params.batch_size )
-    it_val = NumpyArrayIterator( np.ones((10,1,512,512)).astype("float32"), np.ones((10,3,512,512)).astype("float32"), ImageDataGenerator(), batch_size=params.batch_size )
-    it_train.N = 10
-    it_val.N = 10
-    """
+    dataset = h5py.File(params.dataset,"r")
+    imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
+    it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+    it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
 
-    X_mean, X_std, Y_mean, Y_std = 25.904849699354056, 39.261372849783811, 106.54810293305763, 96.274225403759615
-    
-    dataset = h5py.File("/cuda4/storeSSD/cbeckham2/nasa/textures.h5","r")
-    it_train = Hdf5Iterator(dataset['heightmaps'][0:100],
-                            dataset['textures'][0:100],
-                            params.batch_size,
-                            None,
-                            X_mean,
-                            Y_mean,
-                            X_std,
-                            Y_std)
-    it_val = Hdf5Iterator(dataset['heightmaps'][0:100],
-                            dataset['textures'][0:100],
-                            params.batch_size,
-                            None,
-                            X_mean,
-                            Y_mean,
-                            X_std,
-                            Y_std)
-    it_train.N = dataset['heightmaps'].shape[0]
-    it_val.N = it_train.N
+    print "creating models..."
     
     models = model_creation(d, unet, params)
     for key in models:
         models[key]._make_predict_function()
+
+    print "training..."
         
     train(models, it_train, it_val, params)
+
+
+if __name__ == '__main__':
+    pass

@@ -55,6 +55,7 @@ def convert_to_rgb(img, is_binary=False):
 
 def compose_imgs(a, b, is_a_binary=True, is_b_binary=False):
     """Place a and b side by side to be plotted."""
+    
     ap = convert_to_rgb(a, is_binary=is_a_binary)
     bp = convert_to_rgb(b, is_binary=is_b_binary)
 
@@ -116,22 +117,31 @@ def plot_loss(loss, label, filename, log_dir):
     plt.clf()
 
 
-def log(losses, atob, it_val, N=4, log_dir=DEFAULT_LOG_DIR, expt_name=None,
+def log(file_handles, losses, atob, it_val, N=4, log_dir=DEFAULT_LOG_DIR, expt_name=None,
         is_a_binary=True, is_b_binary=False):
-    """Log losses and atob results."""
+    """
+    Log losses and atob results.
+    """
     log_dir = get_log_dir(log_dir, expt_name)
 
     # Save the losses for further inspection
-    pickle.dump(losses, open(os.path.join(log_dir, 'losses.pkl'), 'wb'))
+    #pickle.dump(losses, open(os.path.join(log_dir, 'losses.pkl'), 'wb'))
+
+    # Save to txt file
+    print losses
+    this_row = [ losses[key][-1] for key in losses ]
+    this_row = ",".join([ str(elem) for elem in this_row ]) + "\n"
+    file_handles['results'].write(this_row)
+    file_handles['results'].flush()
 
     ###########################################################################
     #                             PLOT THE LOSSES                             #
     ###########################################################################
-    plot_loss(losses['d'], 'discriminator', 'd_loss.png', log_dir)
-    plot_loss(losses['d_val'], 'discriminator validation', 'd_val_loss.png', log_dir)
+    #plot_loss(losses['d'], 'discriminator', 'd_loss.png', log_dir)
+    #plot_loss(losses['d_val'], 'discriminator validation', 'd_val_loss.png', log_dir)
 
-    plot_loss(losses['p2p'], 'Pix2Pix', 'p2p_loss.png', log_dir)
-    plot_loss(losses['p2p_val'], 'Pix2Pix validation', 'p2p_val_loss.png', log_dir)
+    #plot_loss(losses['p2p'], 'Pix2Pix', 'p2p_loss.png', log_dir)
+    #plot_loss(losses['p2p_val'], 'Pix2Pix validation', 'p2p_val_loss.png', log_dir)
 
     ###########################################################################
     #                          PLOT THE A->B RESULTS                          #
