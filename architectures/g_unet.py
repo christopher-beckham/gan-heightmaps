@@ -1,6 +1,3 @@
-__doc__ = """The model definitions for the pix2pix network taken from the
-retina repository at https://github.com/costapt/vess2ret
-"""
 import os
 
 import keras
@@ -13,6 +10,7 @@ from keras.layers.core import Activation, Dropout
 from keras.layers.normalization import BatchNormalization
 from keras.models import Model
 from keras.optimizers import Adam
+
 
 KERAS_2 = keras.__version__[0] == '2'
 try:
@@ -69,7 +67,7 @@ def BatchNorm(mode=2, axis=1, **kwargs):
         return BatchNormalization(mode=2,axis=axis, **kwargs)
 
 
-def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=1, name='unet'):
+def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, name='unet'):
     # type: (int, int, int, int, bool, str) -> keras.models.Model
     """Define a U-Net.
 
@@ -113,10 +111,6 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=1, 
             x = BatchNorm()(x)
             x = LeakyReLU(0.2)(x)
         return x
-
-    #def padded_deconv(x):
-    #    for z in range(num_padded_conv):
-    #    #    x = De
 
     # in_ch x 512 x 512
     conv1 = Convolution(nf)(i)
@@ -262,108 +256,3 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=1, 
     return unet
 
 
-def discriminator(a_ch, b_ch, nf, opt=Adam(lr=2e-4, beta_1=0.5), name='d'):
-    """Define the discriminator network.
-
-    Parameters:
-    - a_ch: the number of channels of the first image;
-    - b_ch: the number of channels of the second image;
-    - nf: the number of filters of the first layer.
-    """
-    i = Input(shape=(a_ch + b_ch, 512, 512))
-
-    # (a_ch + b_ch) x 512 x 512
-    conv1 = Convolution(nf)(i)
-    x = LeakyReLU(0.2)(conv1)
-    # nf x 256 x 256
-
-    conv2 = Convolution(nf * 2)(x)
-    x = LeakyReLU(0.2)(conv2)
-    # nf*2 x 128 x 128
-
-    conv3 = Convolution(nf * 4)(x)
-    x = LeakyReLU(0.2)(conv3)
-    # nf*4 x 64 x 64
-
-    conv4 = Convolution(nf * 8)(x)
-    x = LeakyReLU(0.2)(conv4)
-    # nf*8 x 32 x 32
-
-    conv5 = Convolution(1)(x)
-    out = Activation('sigmoid')(conv5)
-    # 1 x 16 x 16
-
-    d = Model(i, out, name=name)
-
-    def d_loss(y_true, y_pred):
-        L = objectives.binary_crossentropy(K.batch_flatten(y_true),
-                                           K.batch_flatten(y_pred))
-        return L
-
-    d.compile(optimizer=opt, loss=d_loss)
-    return d
-
-
-def pix2pix(atob, d, a_ch, b_ch, alpha=100, is_a_binary=False,
-            is_b_binary=False, opt=Adam(lr=2e-4, beta_1=0.5), reconstruction_only=False, name='pix2pix'):
-    # type: (...) -> keras.models.Model
-    """
-    Define the pix2pix network.
-    :param atob:
-    :param d:
-    :param a_ch:
-    :param b_ch:
-    :param alpha:
-    :param is_a_binary:
-    :param is_b_binary:
-    :param opt:
-    :param name:
-    :return:
-    """
-    a = Input(shape=(a_ch, 512, 512))
-    b = Input(shape=(b_ch, 512, 512))
-
-    # A -> B'
-    bp = atob(a)
-
-    # Discriminator receives the pair of images
-    d_in = concatenate_layers([a, bp], mode='concat', concat_axis=1)
-
-    pix2pix = Model([a, b], d(d_in), name=name)
-
-    def pix2pix_loss(y_true, y_pred):
-        y_true_flat = K.batch_flatten(y_true)
-        y_pred_flat = K.batch_flatten(y_pred)
-
-        # Adversarial Loss
-        L_adv = objectives.binary_crossentropy(y_true_flat, y_pred_flat)
-
-        # A to B loss
-        b_flat = K.batch_flatten(b)
-        bp_flat = K.batch_flatten(bp)
-        if is_b_binary:
-            L_atob = objectives.binary_crossentropy(b_flat, bp_flat)
-        else:
-            L_atob = K.mean(K.abs(b_flat - bp_flat))
-
-        if reconstruction_only:
-            return L_atob
-        else:
-            return L_adv + alpha * L_atob
-
-    # This network is used to train the generator. Freeze the discriminator part.
-    pix2pix.get_layer('d').trainable = False
-
-    pix2pix.compile(optimizer=opt, loss=pix2pix_loss)
-    return pix2pix
-
-
-if __name__ == '__main__':
-    import doctest
-
-    TEST_TF = True
-    if TEST_TF:
-        os.environ['KERAS_BACKEND'] = 'tensorflow'
-    else:
-        os.environ['KERAS_BACKEND'] = 'theano'
-    doctest.testsource('models.py', verbose=True, optionflags=doctest.ELLIPSIS)

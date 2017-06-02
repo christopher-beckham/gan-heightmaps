@@ -130,6 +130,10 @@ def model_creation(d, atob, params):
         'p2p': p2p,
     })
 
+    for key in models:
+        models[key].summary()
+        models[key]._make_predict_function() ## ???
+    
     return models
 
 
@@ -204,7 +208,7 @@ def train(models, it_train, it_val, params):
         plot_model(models[key], show_shapes=True, to_file="%s/%s/graph_%s.png" % (params.log_dir, params.expt_name, key))
     
     # Get the output shape of the discriminator
-    dout_size = d.output_shape[-2:]
+    dout_size = models.d.output_shape[-2:]
     # Define the data generators
     generators = generators_creation(it_train, it_val, models, dout_size)
 
@@ -253,8 +257,6 @@ if __name__ == '__main__':
 
     params = MyDict({
         # Model
-        'nfd': 32,  # Number of filters of the first layer of the discriminator
-        'nfatob': 64,  # Number of filters of the first layer of the AtoB model
         'alpha': 100,  # The weight of the reconstruction loss of the atob model
         # Train
         'epochs': 100,  # Number of epochs to train the model
@@ -278,64 +280,76 @@ if __name__ == '__main__':
         'target_size': 512,  # The size of the images loaded by the iterator. DOES NOT CHANGE THE MODELS
     })
 
-    param_names = [k + '=' for k in params.keys()] + ['help']
-
-    try:
-        opts, args = getopt.getopt(a, '', param_names)
-    except getopt.GetoptError:
-        #print_help()
-        print "parsing error!"
-        sys.exit()
-
-    for opt, arg in opts:
-        if opt == '--help':
-            print_help()
-            sys.exit()
-        elif opt in ('--nfatob', '--nfd', '--a_ch', '--b_ch', '--epochs', '--batch_size',
-                     '--save_every',
-                     '--target_size'):
-            params[opt[2:]] = int(arg)
-        elif opt in ('--lr', '--beta_1', '--alpha'):
-            params[opt[2:]] = float(arg)
-        elif opt in ('--is_a_binary', '--is_b_binary', '--is_a_grayscale', '--is_b_grayscale',
-                     '--continue_train'):
-            params[opt[2:]] = True if arg == 'True' else False
-        elif opt in ('--base_dir', '--train_dir', '--val_dir', '--expt_name', '--log_dir', '--dataset'):
-            params[opt[2:]] = arg
-
-    print "params:"
-    print params
-            
-    dopt = Adam(lr=params.lr, beta_1=params.beta_1)
-
-    print "defining networks..."
+    def print_params():
+        print "params:"
+        for key in params:
+            print key, ":", params[key]
     
-    # Define the U-Net generator
-    unet = m.g_unet(params.a_ch, params.b_ch, params.nfatob,
-                    batch_size=params.batch_size, is_binary=params.is_b_binary)
-
-    # Define the discriminator
-    d = m.discriminator(params.a_ch, params.b_ch, params.nfd, opt=dopt)
-
-    if params.continue_train:
-        print "loading weights..."
-        load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
     
-    dataset = h5py.File(params.dataset,"r")
-    imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
-    it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
-    it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+    def t7_v2_fix255_desert_testme(mode,seed):
+        """
+        Trying out the desert-only dataset (no validation set yet),
+        with a 1x padded conv u-net.
+        """
+        np.random.seed(seed)
+        # override params here
+        params.expt_name = "t7_v2_fix255_desert_testme"
+        params.dataset = "/data/lisa/data/cbeckham/textures_v2_brown500.h5"
+        params.batch_size = 16
+        params.epochs = 1000
+        params.continue_train = True
+        print_params()
+        dopt = Adam(lr=params.lr, beta_1=params.beta_1)
+        from architectures import g_unet
+        # Define the generator
+        unet = g_unet.g_unet(in_ch=params.a_ch, out_ch=params.b_ch, nf=64, batch_size=params.batch_size, is_binary=params.is_b_binary, num_padded_conv=1)
+        # Define the discriminator
+        d = m.discriminator(params.a_ch, params.b_ch, 32, opt=dopt)
+        if params.continue_train:
+            print "loading weights..."
+            load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
+        dataset = h5py.File(params.dataset,"r")
+        imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
+        it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+        it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+        models = model_creation(d, unet, params)
+        if mode == "train":
+            train(models, it_train, it_val, params)
+        else:
+            raise Exception("unknown mode!")
 
-    print "creating models..."
-    
-    models = model_creation(d, unet, params)
-    for key in models:
-        models[key]._make_predict_function()
 
-    print "training..."
+    def t7_v2_fix255_desert_rnun(mode,seed):
+        """
+        Trying out the desert-only dataset (no validation set yet),
+        with Eugene's ResNet-UNet code.
+        """
+        np.random.seed(seed)
+        # override params here
+        params.expt_name = "t7_v2_fix255_desert_rnun"
+        params.dataset = "/data/lisa/data/cbeckham/textures_v2_brown500.h5"
+        params.batch_size = 16
+        params.epochs = 1000
+        print_params()
+        dopt = Adam(lr=params.lr, beta_1=params.beta_1)
+        from architectures import resnet_unet
+        # Define the generator
+        unet = resnet_unet.net1() # TODO: add paramterisation
+        # Define the discriminator
+        d = m.discriminator(params.a_ch, params.b_ch, 32, opt=dopt)
+        if params.continue_train:
+            print "loading weights..."
+            load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
+        dataset = h5py.File(params.dataset,"r")
+        imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
+        it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+        it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+        models = model_creation(d, unet, params)
+        if mode == "train":
+            train(models, it_train, it_val, params)
+        else:
+            raise Exception("unknown mode!")
+
+
         
-    train(models, it_train, it_val, params)
-
-
-if __name__ == '__main__':
-    pass
+    locals()[ sys.argv[1] ]( sys.argv[2], int(sys.argv[3]) )

@@ -91,11 +91,6 @@ if __name__ == '__main__':
     params = MyDict({
         'results_dir': 'results',  # Directory where to save the results
         'log_dir': 'log',  # Directory where the experiment was logged
-        'base_dir': 'data/unet_segmentations_binary',  # Directory that contains the data
-        'train_dir': 'train',  # Directory inside base_dir that contains training data
-        'val_dir': 'val',  # Directory inside base_dir that contains validation data
-        'test_dir': 'test',  # Directory inside base_dir that contains test data
-        'load_to_memory': True,  # Whether to load the images into memory
         'expt_name': None,  # The name of the experiment to test
         'target_size': 512,  # The size of the images loaded by the iterator
         'N': 100,  # The number of samples to generate
