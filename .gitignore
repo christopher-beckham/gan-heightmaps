@@ -1,0 +1,4 @@
+slurm*.out
+.fuse*
+*.png
+*.pdf
