@@ -25,40 +25,29 @@ K.set_image_dim_ordering('th')
 
 
 def concatenate_layers(inputs, concat_axis, mode='concat'):
-    if KERAS_2:
-        assert mode == 'concat', "Only concatenation is supported in this wrapper"
+    assert mode in ['concat','add']
+    if mode == 'concat':
         return Concatenate(axis=concat_axis)(inputs)
     else:
-        return merge(inputs=inputs, concat_axis=concat_axis, mode=mode)
-
+        return Add()(inputs)
 
 def Convolution(f, k=3, s=2, border_mode='same', **kwargs):
     """Convenience method for Convolutions."""
-    if KERAS_2:
-        return Convolution2D(f,
-                             kernel_size=(k, k),
-                             padding=border_mode,
-                             strides=(s, s),
-                             **kwargs)
-    else:
-        return Convolution2D(f, k, k, border_mode=border_mode,
-                             subsample=(s, s),
-                             **kwargs)
-
+    return Convolution2D(f,
+                         kernel_size=(k, k),
+                         padding=border_mode,
+                         strides=(s, s),
+                         **kwargs)
 
 def Deconvolution(f, output_shape, k=2, s=2, **kwargs):
     """Convenience method for Transposed Convolutions."""
-    if KERAS_2:
-        return Conv2DTranspose(f,
-                               kernel_size=(k, k),
-                               strides=(s, s),
-                               data_format=K.image_data_format(),
-                               **kwargs)
-    else:
-        return Deconvolution2D(f, k, k, output_shape=output_shape,
-                               subsample=(s, s), **kwargs)
+    return Conv2DTranspose(f,
+                           kernel_size=(k, k),
+                           strides=(s, s),
+                           data_format=K.image_data_format(),
+                           **kwargs)
 
-
+    
 def BatchNorm(mode=2, axis=1, **kwargs):
     """Convenience method for BatchNormalization layers."""
     if KERAS_2:
@@ -67,7 +56,7 @@ def BatchNorm(mode=2, axis=1, **kwargs):
         return BatchNormalization(mode=2,axis=axis, **kwargs)
 
 
-def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, name='unet'):
+def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, concat_mode='concat', name='unet'):
     # type: (int, int, int, int, bool, str) -> keras.models.Model
     """Define a U-Net.
 
@@ -107,7 +96,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
 
     def padded_conv(nf, x):
         for z in range(num_padded_conv):
-            x = Convolution(nf,s=1)(x)
+            x = Convolution(nf,s=1,k=1)(x)
             x = BatchNorm()(x)
             x = LeakyReLU(0.2)(x)
         return x
@@ -183,7 +172,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
     x = concatenate_layers([dconv1, conv8], **merge_params)
     x = LeakyReLU(0.2)(x)
     # nf*(8 + 8) x 2 x 2
-    x = padded_conv(nf*8, x)
+    x = padded_conv(nf*(8+8), x)
 
     dconv2 = Deconvolution(nf * 8,
                            get_deconv_shape(batch_size, nf * 8, 4, 4))(x)
@@ -192,7 +181,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
     x = concatenate_layers([dconv2, conv7], **merge_params)
     x = LeakyReLU(0.2)(x)
     # nf*(8 + 8) x 4 x 4
-    x = padded_conv(nf*8, x)
+    x = padded_conv(nf*(8+8), x)
 
     dconv3 = Deconvolution(nf * 8,
                            get_deconv_shape(batch_size, nf * 8, 8, 8))(x)
@@ -201,7 +190,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
     x = concatenate_layers([dconv3, conv6], **merge_params)
     x = LeakyReLU(0.2)(x)
     # nf*(8 + 8) x 8 x 8
-    x = padded_conv(nf*8, x)
+    x = padded_conv(nf*(8+8), x)
 
     dconv4 = Deconvolution(nf * 8,
                            get_deconv_shape(batch_size, nf * 8, 16, 16))(x)
@@ -209,7 +198,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
     x = concatenate_layers([dconv4, conv5], **merge_params)
     x = LeakyReLU(0.2)(x)
     # nf*(8 + 8) x 16 x 16
-    x = padded_conv(nf*8, x)
+    x = padded_conv(nf*(8+8), x)
 
     dconv5 = Deconvolution(nf * 8,
                            get_deconv_shape(batch_size, nf * 8, 32, 32))(x)
@@ -217,7 +206,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
     x = concatenate_layers([dconv5, conv4], **merge_params)
     x = LeakyReLU(0.2)(x)
     # nf*(8 + 8) x 32 x 32
-    x = padded_conv(nf*8, x)
+    x = padded_conv(nf*(8+8), x)
     
     dconv6 = Deconvolution(nf * 4,
                            get_deconv_shape(batch_size, nf * 4, 64, 64))(x)
@@ -225,7 +214,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
     x = concatenate_layers([dconv6, conv3], **merge_params)
     x = LeakyReLU(0.2)(x)
     # nf*(4 + 4) x 64 x 64
-    x = padded_conv(nf*4, x)
+    x = padded_conv(nf*(4+4), x)
     
     dconv7 = Deconvolution(nf * 2,
                            get_deconv_shape(batch_size, nf * 2, 128, 128))(x)
@@ -233,7 +222,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
     x = concatenate_layers([dconv7, conv2], **merge_params)
     x = LeakyReLU(0.2)(x)
     # nf*(2 + 2) x 128 x 128
-    x = padded_conv(nf*2, x)
+    x = padded_conv(nf*(2+2), x)
     
     dconv8 = Deconvolution(nf,
                            get_deconv_shape(batch_size, nf, 256, 256))(x)
@@ -241,7 +230,7 @@ def g_unet(in_ch, out_ch, nf, batch_size=1, is_binary=False, num_padded_conv=0, 
     x = concatenate_layers([dconv8, conv1], **merge_params)
     x = LeakyReLU(0.2)(x)
     # nf*(1 + 1) x 256 x 256
-    x = padded_conv(nf, x)
+    x = padded_conv(nf*(1+1), x)
 
     dconv9 = Deconvolution(out_ch,
                            get_deconv_shape(batch_size, out_ch, 512, 512))(x)

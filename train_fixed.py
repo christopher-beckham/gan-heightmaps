@@ -285,34 +285,42 @@ if __name__ == '__main__':
         for key in params:
             print key, ":", params[key]
     
-    
-    def t7_v2_fix255_desert_testme(mode,seed):
+
+    def get_iterators():
+        dataset = h5py.File(params.dataset,"r")
+        imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
+        it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+        it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+        return it_train, it_val
+            
+    def t7_v2_fix255_desert_alpha100_ed3(mode,seed):
         """
         Trying out the desert-only dataset (no validation set yet),
         with a 1x padded conv u-net.
         """
         np.random.seed(seed)
         # override params here
-        params.expt_name = "t7_v2_fix255_desert_testme"
+        params.expt_name = "t7_v2_fix255_desert_alpha100_ed3"
         params.dataset = "/data/lisa/data/cbeckham/textures_v2_brown500.h5"
         params.batch_size = 16
         params.epochs = 1000
-        params.continue_train = True
+        params.alpha = 100.
         print_params()
         dopt = Adam(lr=params.lr, beta_1=params.beta_1)
-        from architectures import g_unet
+        from architectures import default_models
         # Define the generator
-        unet = g_unet.g_unet(in_ch=params.a_ch, out_ch=params.b_ch, nf=64, batch_size=params.batch_size, is_binary=params.is_b_binary, num_padded_conv=1)
+        unet = default_models.g_unet(in_ch=params.a_ch,
+                             out_ch=params.b_ch,
+                             nf=64,
+                             batch_size=params.batch_size,
+                             is_binary=params.is_b_binary)
         # Define the discriminator
-        d = m.discriminator(params.a_ch, params.b_ch, 32, opt=dopt)
+        d = m.discriminator(params.a_ch, params.b_ch, 32, extra_depth=3, opt=dopt)
         if params.continue_train:
             print "loading weights..."
             load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
-        dataset = h5py.File(params.dataset,"r")
-        imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
-        it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
-        it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
         models = model_creation(d, unet, params)
+        it_train, it_val = get_iterators()
         if mode == "train":
             train(models, it_train, it_val, params)
         else:
@@ -341,10 +349,8 @@ if __name__ == '__main__':
             print "loading weights..."
             load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
         dataset = h5py.File(params.dataset,"r")
-        imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
-        it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
-        it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
         models = model_creation(d, unet, params)
+        it_train, it_val = get_iterators()
         if mode == "train":
             train(models, it_train, it_val, params)
         else:

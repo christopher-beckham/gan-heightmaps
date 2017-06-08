@@ -299,10 +299,10 @@ def iterate_hdf5(imgen=None, is_a_binary=True, is_b_binary=False):
 class Hdf5Iterator():
     def __init__(self, X, y, bs, imgen, is_a_binary, is_b_binary):
         """
-        :X:
-        :y:
-        :bs:
-        :imgen:
+        :X: in our case, the heightmaps
+        :y: in our case, the textures
+        :bs: batch size
+        :imgen: optional image data generator
         :is_a_binary: if the A image is binary, we have to divide
          by 255, otherwise we scale to [-1, 1] using tanh scaling
         :is_b_binary: same as is_a_binary
@@ -315,6 +315,20 @@ class Hdf5Iterator():
     def next(self):
         return self.fn.next()
 
+class Hdf5DcganIterator():
+    def __init__(self, X, bs, imgen, is_binary):
+        self.fn = iterate_hdf5(imgen, is_a_binary=is_binary, is_b_binary=False)(X, np.zeros_like(X), bs)
+        self.N = X.shape[0]
+    def __iter__(self):
+        return self
+    def next(self):
+        from keras_adversarial import gan_targets
+        xbatch, _ = self.fn.next()
+        ybatch = gan_targets(xbatch.shape[0])
+        return  xbatch, ybatch
+        
+
+    
 if __name__ == '__main__':
 
     from keras.preprocessing.image import ImageDataGenerator
