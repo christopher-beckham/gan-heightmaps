@@ -27,13 +27,44 @@ import keras.backend as K
 from image_utils import dim_ordering_fix, dim_ordering_unfix, dim_ordering_shape
 
 
-def model_generator(latent_dim, nch=512, h=5, num_repeats=0, reg=lambda: l1l2(l1=1e-7, l2=1e-7)):
+def _model_generator():
     model = Sequential()
-    model.add(Dense(nch * 4 * 4, input_dim=latent_dim, kernel_regularizer=reg()))
-    model.add(BatchNormalization(axis=1)) ##?
+    nch = 256
+    reg = lambda: l1l2(l1=1e-7, l2=1e-7)
+    h = 5
+    model.add(Dense(nch * 4 * 4, input_dim=100, W_regularizer=reg()))
+    model.add(BatchNormalization(mode=0))
     model.add(Reshape(dim_ordering_shape((nch, 4, 4))))
-    steps = [nch/2, nch/2, nch/4, nch/4, nch/8, nch/8, nch/16]
-    for n in steps:
+    model.add(Convolution2D(nch / 2, h, h, border_mode='same', W_regularizer=reg()))
+    model.add(BatchNormalization(mode=0, axis=1))
+    model.add(LeakyReLU(0.2))
+    model.add(UpSampling2D(size=(2, 2)))
+    model.add(Convolution2D(nch / 2, h, h, border_mode='same', W_regularizer=reg()))
+    model.add(BatchNormalization(mode=0, axis=1))
+    model.add(LeakyReLU(0.2))
+    model.add(UpSampling2D(size=(2, 2)))
+    model.add(Convolution2D(nch / 4, h, h, border_mode='same', W_regularizer=reg()))
+    model.add(BatchNormalization(mode=0, axis=1))
+    model.add(LeakyReLU(0.2))
+    model.add(UpSampling2D(size=(2, 2)))
+    model.add(Convolution2D(3, h, h, border_mode='same', W_regularizer=reg()))
+    model.add(Activation('sigmoid'))
+    return model
+
+
+def model_generator(latent_dim, nch=512, h=5, initial_size=4, final_size=512, div=[2,2,4,4,8,8,16], num_repeats=0, reg=lambda: l1l2(l1=1e-7, l2=1e-7)):
+    # e.g. for 512x512 generation, if we start at 4x4,
+    # we are only allowed 7 upsampling div to take us to
+    # 512px
+    assert initial_size * (2**len(div)) == final_size
+    model = Sequential()
+    model.add(Dense(nch * initial_size * initial_size, input_dim=latent_dim, kernel_regularizer=reg()))
+    model.add(BatchNormalization(axis=1)) ##?
+    model.add(Reshape(dim_ordering_shape((nch, initial_size, initial_size))))
+    div = [nch/elem for elem in div]
+    print div
+    #div = [nch/2, nch/2, nch/4, nch/4, nch/8, nch/8, nch/16]
+    for n in div:
         for r in range(num_repeats+1):
             model.add(Conv2D(n, h, padding='same', kernel_regularizer=reg()))
             model.add(BatchNormalization(mode=0, axis=1))
@@ -43,11 +74,12 @@ def model_generator(latent_dim, nch=512, h=5, num_repeats=0, reg=lambda: l1l2(l1
     model.add(Activation('sigmoid'))
     return model
 
-def model_discriminator(nch=512, h=5, num_repeats=0, bn=False, reg=lambda: l1l2(l1=1e-7, l2=1e-7) ):
+def model_discriminator(nch=512, h=5, div=[8,4,4,2,2,1,1], num_repeats=0, bn=False, pool_mode='max', reg=lambda: l1l2(l1=1e-7, l2=1e-7) ):
     model = Sequential()
     n = nch / 8
-    steps = [nch/8, nch/4, nch/4, nch/2, nch/2, nch/1, nch/1]
-    for idx,n in enumerate(steps):
+    #div = [nch/8, nch/4, nch/4, nch/2, nch/2, nch/1, nch/1]
+    div = [nch/elem for elem in div]
+    for idx,n in enumerate(div):
         for r in range(num_repeats+1):
             if idx==0:
                 model.add(Conv2D(n, h, strides=1, padding='same', kernel_regularizer=reg(),
@@ -57,27 +89,37 @@ def model_discriminator(nch=512, h=5, num_repeats=0, bn=False, reg=lambda: l1l2(
             if bn:
                 model.add(BatchNormalization(mode=0,axis=1))
             model.add(LeakyReLU(0.2))
-        model.add(MaxPooling2D(pool_size=(2, 2)))
+        if pool_mode == 'max':
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+        else:
+            model.add(AveragePooling2D(pool_size=(2,2)))
     model.add(Conv2D(1, h, padding='same', kernel_regularizer=reg()))
-    reduction_factor = nch // (2**len(steps))
+    reduction_factor = nch // (2**len(div))
     model.add(AveragePooling2D(pool_size=(reduction_factor,reduction_factor), border_mode='valid')) #4x4
     model.add(Flatten())
     model.add(Activation('sigmoid'))
     return model
 
 
-def train(adversarial_optimizer, path, opt_g, opt_d, nb_epoch, generator, discriminator, latent_dim=100,
-          loss='binary_crossentropy', latent_sampler=normal_latent_sampling((100,)), resume=None):
+def train(adversarial_optimizer, path, opt_g, opt_d, nb_epoch, generator, discriminator, iterators, latent_dim=100, batch_size=4, loss='binary_crossentropy',
+          latent_sampler=normal_latent_sampling, latent_sampler_args={}, resume=None):
     csvpath = os.path.join(path, "history.csv")
-    if os.path.exists(csvpath):
-        print("Already exists: {}".format(csvpath))
-        return
+    if not os.path.exists(csvpath):
+        os.makedirs(csvpath)
     
     print("Training: {}".format(csvpath))
     # gan (x - > yfake, yreal), z is gaussian generated on GPU
     # can also experiment with uniform_latent_sampling
+    
     generator.summary()
     discriminator.summary()
+
+    from keras.utils import plot_model
+    for model, name in zip([generator, discriminator], ["gen", "disc"]):
+        plot_model(model, show_shapes=True, to_file="%s/graph_%s.png" % (path, name))
+    
+    latent_sampler = latent_sampler( (latent_dim,), **latent_sampler_args )
+    
     gan = simple_gan(generator=generator,
                      discriminator=discriminator,
                      latent_sampling=latent_sampler)
@@ -114,7 +156,7 @@ def train(adversarial_optimizer, path, opt_g, opt_d, nb_epoch, generator, discri
     #history = fit(model, x=dim_ordering_fix(xtrain), y=y, validation_data=(dim_ordering_fix(xtest), ytest),
     #              callbacks=callbacks, nb_epoch=nb_epoch,
     #              batch_size=32)
-    it_train, it_val = get_iterators()
+    it_train, it_val = iterators
     model.fit_generator( it_train, steps_per_epoch=it_train.N, epochs=nb_epoch, callbacks=callbacks)
     
     # save history to CSV
@@ -126,11 +168,11 @@ def train(adversarial_optimizer, path, opt_g, opt_d, nb_epoch, generator, discri
     discriminator.save(os.path.join(path, "discriminator.h5"))
 
 
-def get_iterators():
+def get_iterators(batch_size):
     dataset = h5py.File("/data/lisa/data/cbeckham/textures_v2_brown500.h5","r")
     imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
-    it_train = Hdf5DcganIterator(dataset['xt'], 4, imgen, is_binary=True)
-    it_val = Hdf5DcganIterator(dataset['xv'], 4, imgen, is_binary=True)
+    it_train = Hdf5DcganIterator(dataset['xt'], batch_size, imgen, is_binary=True)
+    it_val = Hdf5DcganIterator(dataset['xv'], batch_size, imgen, is_binary=True)
     return it_train, it_val    
 
 if __name__ == "__main__":
@@ -155,8 +197,63 @@ if __name__ == "__main__":
             train(AdversarialOptimizerSimultaneous(), "output/gan-heightmap-ld1000-b-discbn",
                         opt_g=Adam(1e-4, decay=1e-5),
                         opt_d=Adam(1e-3, decay=1e-5),
-                        nb_epoch=100, generator=generator, discriminator=discriminator,
-                        latent_dim=latent_dim)
+                        nb_epoch=300, generator=generator, discriminator=discriminator,
+                        latent_dim=latent_dim)            
+
+    def gan_heightmap_ld1000_b_discbn_i1(mode):
+        # this works well! so far anyway...
+        latent_dim = 1000
+        generator = model_generator(latent_dim, num_repeats=0, div=[2,2,4,4,8,8,8]) # not 16 at end
+        discriminator = model_discriminator(num_repeats=0, bn=True)
+        if mode == "train":
+            train(AdversarialOptimizerSimultaneous(), "output/gan-heightmap-ld1000-b-discbn_i1",
+                        opt_g=Adam(1e-4, decay=1e-5),
+                        opt_d=Adam(1e-3, decay=1e-5),
+                        nb_epoch=300, generator=generator, discriminator=discriminator,
+                        latent_dim=latent_dim, iterators=get_iterators(4))
+
+
+            
+    def gan_heightmap_ld1000_b_discbn_bb1(mode):
+        # may do well...
+        latent_dim = 1000
+        generator = model_generator(latent_dim, num_repeats=1)
+        discriminator = model_discriminator(num_repeats=1, bn=True, div=[4,4,4,2,2,2,1])
+        if mode == "train":
+            train(AdversarialOptimizerSimultaneous(), "output/gan-heightmap-ld1000-b-discbn-bb1",
+                        opt_g=Adam(1e-4, decay=1e-5),
+                        opt_d=Adam(1e-3, decay=1e-5),
+                        nb_epoch=300, generator=generator, discriminator=discriminator,
+                        latent_dim=latent_dim, iterators=get_iterators(2))
+
+    def gan_heightmap_ld1000_b_discbn_bb2(mode):
+        # disc has slightly higher capacity than bb1
+        latent_dim = 1000
+        generator = model_generator(latent_dim, num_repeats=1)
+        discriminator = model_discriminator(num_repeats=1, bn=True, div=[4,4,4,4,2,2,2,1])
+        if mode == "train":
+            train(AdversarialOptimizerSimultaneous(), "output/gan-heightmap-ld1000-b-discbn-bb2",
+                        opt_g=Adam(1e-4, decay=1e-5),
+                        opt_d=Adam(1e-3, decay=1e-5),
+                        nb_epoch=300, generator=generator, discriminator=discriminator,
+                        latent_dim=latent_dim, iterators=get_iterators(2))
+
+    def gan_heightmap_ld1000_b_discbn_bb2b(mode):
+        # disc has slightly higher capacity than bb1
+        # but also equal LRs
+        latent_dim = 1000
+        generator = model_generator(latent_dim, num_repeats=1)
+        discriminator = model_discriminator(num_repeats=1, bn=True, div=[4,4,4,4,2,2,2,1])
+        if mode == "train":
+            train(AdversarialOptimizerSimultaneous(), "output/gan-heightmap-ld1000-b-discbn-bb2b",
+                        opt_g=Adam(1e-3, decay=1e-5),
+                        opt_d=Adam(1e-3, decay=1e-5),
+                        nb_epoch=300, generator=generator, discriminator=discriminator,
+                        latent_dim=latent_dim, iterators=get_iterators(3))
+
+
+            
+
             
     def gan_heightmap_ld1000_b_discbn_unif(mode):
         # try out unif sampling
@@ -173,6 +270,7 @@ if __name__ == "__main__":
                         nb_epoch=100, generator=generator, discriminator=discriminator,
                         latent_dim=latent_dim,
                         latent_sampler=uniform_latent_sampling((latent_dim,)))
-            
+
+
             
     locals()[ sys.argv[1] ]( sys.argv[2] )
