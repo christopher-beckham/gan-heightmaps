@@ -1,16 +1,17 @@
 import matplotlib as mpl
-
 # This line allows mpl to run with no DISPLAY defined
 mpl.use('Agg')
+import matplotlib.pyplot as plt
 
 import pandas as pd
 import numpy as np
 import os
+from keras import backend as K
 from keras.layers import Reshape, Flatten, LeakyReLU, Activation, Conv2D, Dense
 from keras.layers.convolutional import UpSampling2D, MaxPooling2D
 from keras.models import Sequential
 from keras.optimizers import Adam
-from keras.callbacks import CSVLogger
+from keras.callbacks import CSVLogger, ModelCheckpoint
 from keras_adversarial.image_grid_callback import ImageGridCallback
 import h5py
 from keras.preprocessing.image import ImageDataGenerator
@@ -101,29 +102,28 @@ def model_discriminator(nch=512, h=5, div=[8,4,4,2,2,1,1], num_repeats=0, bn=Fal
     return model
 
 
-def train(adversarial_optimizer, path, opt_g, opt_d, nb_epoch, generator, discriminator, iterators, latent_dim=100, batch_size=4, loss='binary_crossentropy',
-          latent_sampler=normal_latent_sampling, latent_sampler_args={}, resume=None):
-    csvpath = os.path.join(path, "history.csv")
-    if not os.path.exists(csvpath):
-        os.makedirs(csvpath)
+def plot_models(generator, discriminator, path):
+    from keras.utils import plot_model
+    for model, name in zip([generator, discriminator], ["gen", "disc"]):
+        plot_model(model, show_shapes=True, to_file="%s/graph_%s.png" % (path, name))
+
+def get_model(adversarial_optimizer,
+          opt_g,
+          opt_d,
+          generator,
+          discriminator,
+          loss='binary_crossentropy',
+          latent_sampler=normal_latent_sampling((100,))):
     
-    print("Training: {}".format(csvpath))
     # gan (x - > yfake, yreal), z is gaussian generated on GPU
     # can also experiment with uniform_latent_sampling
     
     generator.summary()
     discriminator.summary()
-
-    from keras.utils import plot_model
-    for model, name in zip([generator, discriminator], ["gen", "disc"]):
-        plot_model(model, show_shapes=True, to_file="%s/graph_%s.png" % (path, name))
-    
-    latent_sampler = latent_sampler( (latent_dim,), **latent_sampler_args )
     
     gan = simple_gan(generator=generator,
                      discriminator=discriminator,
                      latent_sampling=latent_sampler)
-
     # build adversarial model
     model = AdversarialModel(base_model=gan,
                              player_params=[generator.trainable_weights, discriminator.trainable_weights],
@@ -131,8 +131,16 @@ def train(adversarial_optimizer, path, opt_g, opt_d, nb_epoch, generator, discri
     model.adversarial_compile(adversarial_optimizer=adversarial_optimizer,
                               player_optimizers=[opt_g, opt_d],
                               loss=loss)
+    return model
 
+
+def train(model, generator, iterators, nb_epoch, path, latent_dim, save_to=None, resume=None):
+
+    if save_to != None and not os.path.exists(save_to):
+        os.makedirs(save_to)
+        
     # create callback to generate images
+    # TODO
     zsamples = np.random.normal(size=(10 * 10, latent_dim))
 
     def generator_sampler():
@@ -145,28 +153,24 @@ def train(adversarial_optimizer, path, opt_g, opt_d, nb_epoch, generator, discri
     generator_cb = ImageGridCallback(os.path.join(path, "epoch-{:03d}.png"), generator_sampler, cmap='gray')
 
     callbacks = [generator_cb]
+    # create the file logger callback
     csv_filename = "%s/results.txt" % path
     if resume == None:
         # create the file
         f = open(csv_filename, "wb")
         f.close()
+    else:
+        print "loading weights from... %s" % resume
+        model.load_weights(resume)
     csv_logger = CSVLogger(csv_filename, append=True if os.path.exists(csv_filename) else False)
-    callbacks.append(csv_logger)    
+    callbacks.append(csv_logger)
+    # create the model checkpointing callback
+    if save_to != None:
+        chkpt = ModelCheckpoint(filepath="%s/weights.{epoch:03d}.h5" % save_to, save_weights_only=True, period=5)
+        callbacks.append(chkpt)
     
-    #history = fit(model, x=dim_ordering_fix(xtrain), y=y, validation_data=(dim_ordering_fix(xtest), ytest),
-    #              callbacks=callbacks, nb_epoch=nb_epoch,
-    #              batch_size=32)
     it_train, it_val = iterators
-    model.fit_generator( it_train, steps_per_epoch=it_train.N, epochs=nb_epoch, callbacks=callbacks)
-    
-    # save history to CSV
-    df = pd.DataFrame(history.history)
-    df.to_csv(csvpath)
-
-    # save models
-    generator.save(os.path.join(path, "generator.h5"))
-    discriminator.save(os.path.join(path, "discriminator.h5"))
-
+    model.fit_generator(it_train, steps_per_epoch=it_train.N, epochs=nb_epoch, callbacks=callbacks)
 
 def get_iterators(batch_size):
     dataset = h5py.File("/data/lisa/data/cbeckham/textures_v2_brown500.h5","r")
@@ -174,6 +178,14 @@ def get_iterators(batch_size):
     it_train = Hdf5DcganIterator(dataset['xt'], batch_size, imgen, is_binary=True)
     it_val = Hdf5DcganIterator(dataset['xv'], batch_size, imgen, is_binary=True)
     return it_train, it_val    
+
+def iterator(arr, bs):
+    b = 0
+    while True:
+        if b*bs >= arr.shape[0]:
+            break
+        yield arr[b*bs:(b+1)*bs]
+        b += 1
 
 if __name__ == "__main__":
 
@@ -201,18 +213,39 @@ if __name__ == "__main__":
                         latent_dim=latent_dim)            
 
     def gan_heightmap_ld1000_b_discbn_i1(mode):
+        assert mode in ["train", "test"]
         # this works well! so far anyway...
         latent_dim = 1000
         generator = model_generator(latent_dim, num_repeats=0, div=[2,2,4,4,8,8,8]) # not 16 at end
         discriminator = model_discriminator(num_repeats=0, bn=True)
+        name = "gan-heightmap-ld1000-b-discbn_i1_repeat"
+        model = get_model(
+            adversarial_optimizer=AdversarialOptimizerSimultaneous(),
+            opt_g=Adam(1e-4, decay=1e-5), opt_d=Adam(1e-3, decay=1e-5),
+            generator=generator, discriminator=discriminator,
+            latent_sampler=normal_latent_sampling((latent_dim,)))
         if mode == "train":
-            train(AdversarialOptimizerSimultaneous(), "output/gan-heightmap-ld1000-b-discbn_i1",
-                        opt_g=Adam(1e-4, decay=1e-5),
-                        opt_d=Adam(1e-3, decay=1e-5),
-                        nb_epoch=300, generator=generator, discriminator=discriminator,
-                        latent_dim=latent_dim, iterators=get_iterators(4))
-
-
+            train(model=model, generator=generator,
+                  iterators=get_iterators(4), nb_epoch=300,
+                  save_to="models/%s" % name,
+                  path="output/%s" % name,
+                  latent_dim=latent_dim,
+                  resume="models/gan-heightmap-ld1000-b-discbn_i1_repeat/weights.067.h5.bak")
+        else:
+            from skimage.io import imsave
+            model_name = "models/gan-heightmap-ld1000-b-discbn_i1_repeat/weights.067.h5.bak"
+            zsamples = np.random.normal(size=(10 * 10, latent_dim))
+            model.load_weights(model_name)
+            ctr = 0
+            base_dir = "images_512/%s" % name
+            if not os.path.exists(base_dir):
+                os.makedirs(base_dir)
+            for zbatch in iterator(zsamples, bs=10):
+                maps = generator.predict(zbatch)
+                for i in range(maps.shape[0]):
+                    imsave(fname="%s/%s.%i.png" % (base_dir, os.path.basename(model_name), ctr), arr=maps[i][0])
+                    ctr += 1
+                       
             
     def gan_heightmap_ld1000_b_discbn_bb1(mode):
         # may do well...
