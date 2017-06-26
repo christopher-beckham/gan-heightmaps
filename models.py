@@ -60,7 +60,7 @@ def BatchNorm(mode=2, axis=1, **kwargs):
 
 
     
-def discriminator(a_ch, b_ch, nf, extra_depth=0, opt=Adam(lr=2e-4, beta_1=0.5), name='d'):
+def discriminator(a_ch, b_ch, nf, extra_depth=0, bn=False, depths=[1,2,4,8], opt=Adam(lr=2e-4, beta_1=0.5), name='d'):
     """Define the discriminator network.
 
     Parameters:
@@ -80,13 +80,10 @@ def discriminator(a_ch, b_ch, nf, extra_depth=0, opt=Adam(lr=2e-4, beta_1=0.5), 
     # nf*8 x 32 x 32
 
     x = i
-    default_depths = [1,2,4,8]
-    for depth_factor in default_depths:
+    for depth_factor in depths:
         x = Convolution(nf*depth_factor)(x)
-        x = LeakyReLU(0.2)(x)
-
-    for r in range(extra_depth):
-        x = Convolution( nf*(2**(3+r+1)) )(x)
+        if bn:
+            x = BatchNormalization(axis=1)(x)
         x = LeakyReLU(0.2)(x)
 
     x = Convolution(1)(x)
@@ -94,6 +91,7 @@ def discriminator(a_ch, b_ch, nf, extra_depth=0, opt=Adam(lr=2e-4, beta_1=0.5), 
     # 1 x 16 x 16
 
     d = Model(i, out, name=name)
+    #d.summary()
 
     def d_loss(y_true, y_pred):
         L = objectives.binary_crossentropy(K.batch_flatten(y_true),
@@ -104,8 +102,8 @@ def discriminator(a_ch, b_ch, nf, extra_depth=0, opt=Adam(lr=2e-4, beta_1=0.5), 
     return d
 
 
-def pix2pix(atob, d, a_ch, b_ch, alpha=100, is_a_binary=False,
-            is_b_binary=False, opt=Adam(lr=2e-4, beta_1=0.5), reconstruction_only=False, name='pix2pix'):
+def pix2pix(atob, d, a_ch, b_ch, alpha=100, is_a_grayscale=False,
+            is_b_grayscale=False, opt=Adam(lr=2e-4, beta_1=0.5), reconstruction_only=False, name='pix2pix'):
     # type: (...) -> keras.models.Model
     """
     Define the pix2pix network.
@@ -114,8 +112,8 @@ def pix2pix(atob, d, a_ch, b_ch, alpha=100, is_a_binary=False,
     :param a_ch:
     :param b_ch:
     :param alpha:
-    :param is_a_binary:
-    :param is_b_binary:
+    :param is_a_grayscale:
+    :param is_b_grayscale:
     :param opt:
     :param name:
     :return:
@@ -141,14 +139,17 @@ def pix2pix(atob, d, a_ch, b_ch, alpha=100, is_a_binary=False,
         # A to B loss
         b_flat = K.batch_flatten(b)
         bp_flat = K.batch_flatten(bp)
-        if is_b_binary:
+        if is_b_grayscale:
             L_atob = objectives.binary_crossentropy(b_flat, bp_flat)
         else:
             L_atob = K.mean(K.abs(b_flat - bp_flat))
+            #L_atob = objectives.mean_squared_error(b_flat, bp_flat)
 
         if reconstruction_only:
+            print "reconstruction only..."
             return L_atob
         else:
+            print "alpha = ", alpha
             return L_adv + alpha * L_atob
 
     # This network is used to train the generator. Freeze the discriminator part.

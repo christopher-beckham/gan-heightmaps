@@ -31,7 +31,7 @@ class MyDict(dict):
     __setattr__ = dict.__setitem__
 
 
-def convert_to_rgb(img, is_binary=False):
+def convert_to_rgb(img, is_grayscale=False):
     """Given an image, make sure it has 3 channels and that it is between 0 and 1."""
     if len(img.shape) != 3:
         raise Exception("""Image must have 3 dimensions (channels x height x width). """
@@ -46,18 +46,18 @@ def convert_to_rgb(img, is_binary=False):
     if img_ch == 1:
         imgp = np.repeat(img, 3, axis=0)
 
-    if not is_binary:
+    if not is_grayscale:
         imgp = imgp * 127.5 + 127.5
         imgp /= 255.
 
     return np.clip(imgp.transpose((1, 2, 0)), 0, 1)
 
 
-def compose_imgs(a, b, is_a_binary=True, is_b_binary=False):
+def compose_imgs(a, b, is_a_grayscale=True, is_b_grayscale=False):
     """Place a and b side by side to be plotted."""
     
-    ap = convert_to_rgb(a, is_binary=is_a_binary)
-    bp = convert_to_rgb(b, is_binary=is_b_binary)
+    ap = convert_to_rgb(a, is_grayscale=is_a_grayscale)
+    bp = convert_to_rgb(b, is_grayscale=is_b_grayscale)
 
     if ap.shape != bp.shape:
         raise Exception("""A and B must have the same size. """
@@ -118,7 +118,7 @@ def plot_loss(loss, label, filename, log_dir):
 
 
 def log(file_handles, losses, atob, it_val, N=4, log_dir=DEFAULT_LOG_DIR, expt_name=None,
-        is_a_binary=True, is_b_binary=False):
+        is_a_grayscale=True, is_b_grayscale=False):
     """
     Log losses and atob results.
     """
@@ -148,10 +148,14 @@ def log(file_handles, losses, atob, it_val, N=4, log_dir=DEFAULT_LOG_DIR, expt_n
     ###########################################################################
     plt.figure(figsize=(10, 6))
     for i in range(N*N):
+
+        #import pdb
+        #pdb.set_trace()
+        
         a, _ = next(it_val)
 
         bp = atob.predict(a)
-        img = compose_imgs(a[0], bp[0], is_a_binary=is_a_binary, is_b_binary=is_b_binary)
+        img = compose_imgs(a[0], bp[0], is_a_grayscale=is_a_grayscale, is_b_grayscale=is_b_grayscale)
 
         plt.subplot(N, N, i+1)
         plt.imshow(img)

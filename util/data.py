@@ -272,7 +272,7 @@ def _get_slices(length, bs):
         b += 1
     return slices
 
-def iterate_hdf5(imgen=None, is_a_binary=True, is_b_binary=False):
+def iterate_hdf5(imgen=None, is_a_grayscale=True, is_b_grayscale=False, is_uint8=True):
     def _iterate_hdf5(X_arr, y_arr, bs, rnd_state=np.random.RandomState(0)):
         assert X_arr.shape[0] == y_arr.shape[0]
         while True:
@@ -280,13 +280,14 @@ def iterate_hdf5(imgen=None, is_a_binary=True, is_b_binary=False):
             if rnd_state != None:
                 rnd_state.shuffle(slices)
             for elem in slices:
-                this_X, this_Y = X_arr[elem], y_arr[elem]
+                this_X, this_Y = X_arr[elem].astype("float32"), y_arr[elem].astype("float32")
                 # TODO: only compatible with theano
                 this_X = this_X.swapaxes(3,2).swapaxes(2,1)
                 this_Y = this_Y.swapaxes(3,2).swapaxes(2,1)
-                # normalise A and B
-                this_X = this_X / 255.0 if is_a_binary else (this_X - 127.5) / 127.5
-                this_Y = this_Y / 255.0 if is_b_binary else (this_Y - 127.5) / 127.5
+                # normalise A and B if these are in the range [0,255]
+                if is_uint8:
+                    this_X = (this_X / 255.0) if is_a_grayscale else (this_X - 127.5) / 127.5
+                    this_Y = (this_Y / 255.0) if is_b_grayscale else (this_Y - 127.5) / 127.5
                 # if we passed an image generator, augment the images
                 if imgen != None:
                     seed = rnd_state.randint(0, 100000)
@@ -297,7 +298,7 @@ def iterate_hdf5(imgen=None, is_a_binary=True, is_b_binary=False):
 
 # this just wraps the above functional iterator
 class Hdf5Iterator():
-    def __init__(self, X, y, bs, imgen, is_a_binary, is_b_binary):
+    def __init__(self, X, y, bs, imgen, is_a_grayscale, is_b_grayscale, is_uint8=True):
         """
         :X: in our case, the heightmaps
         :y: in our case, the textures
@@ -308,7 +309,7 @@ class Hdf5Iterator():
         :is_b_binary: same as is_a_binary
         """
         assert X.shape[0] == y.shape[0]
-        self.fn = iterate_hdf5(imgen, is_a_binary, is_b_binary)(X, y, bs)
+        self.fn = iterate_hdf5(imgen, is_a_grayscale, is_b_grayscale, is_uint8)(X, y, bs)
         self.N = X.shape[0]
     def __iter__(self):
         return self

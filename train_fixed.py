@@ -10,12 +10,15 @@ from tqdm import tqdm
 from keras.optimizers import Adam
 from keras.preprocessing.image import ImageDataGenerator
 from util.data import TwoImageIterator, iterate_hdf5, Hdf5Iterator
-from util.util import MyDict, log, save_weights, load_weights, load_losses, create_expt_dir
+from util.util import MyDict, log, save_weights, load_weights, load_losses, create_expt_dir, convert_to_rgb
 
 import h5py
 from time import time
 
 from collections import OrderedDict
+
+import sys
+sys.setrecursionlimit(10000)
 
 def discriminator_generator(it, atob, dout_size):
     """
@@ -68,6 +71,8 @@ def pix2pix_generator(it, dout_size):
         for a, b in it:
             # 1 is fake, 0 is real
             y = np.zeros((a.shape[0], 1) + dout_size)
+            #import pdb
+            #pdb.set_trace()
             yield [a, b], y
 
 
@@ -122,7 +127,7 @@ def model_creation(d, atob, params):
     """Create all the necessary models."""
     opt = Adam(lr=params.lr, beta_1=params.beta_1)
     p2p = m.pix2pix(atob, d, params.a_ch, params.b_ch, alpha=params.alpha, opt=opt,
-                    is_a_binary=params.is_a_binary, is_b_binary=params.is_b_binary)
+                    is_a_grayscale=params.is_a_grayscale, is_b_grayscale=params.is_b_grayscale, reconstruction_only=params.reconstruction_only)
 
     models = MyDict({
         'atob': atob,
@@ -132,7 +137,7 @@ def model_creation(d, atob, params):
 
     for key in models:
         models[key].summary()
-        models[key]._make_predict_function() ## ???
+        #models[key]._make_predict_function() ## ???
     
     return models
 
@@ -173,9 +178,12 @@ def train_iteration(models, generators, losses, params):
     p2p = models.p2p
 
     # Update the dscriminator
-    dhist = train_discriminator(d, d_gen, steps_per_epoch=params.train_samples // params.batch_size)
-    print "  dhist = ", dhist
-    #losses['d'].extend(dhist.history['loss'])
+    if not params.reconstruction_only:
+        dhist = train_discriminator(d, d_gen, steps_per_epoch=params.train_samples // params.batch_size)
+        print "  dhist = ", dhist
+        #losses['d'].extend(dhist.history['loss'])
+    else:
+        dhist = -1
     losses['d'].append(dhist)
 
     # Update the generator
@@ -250,7 +258,7 @@ def train(models, it_train, it_val, params):
         if (e + 1) % params.save_every == 0:
             save_weights(models, log_dir=params.log_dir, expt_name=params.expt_name)
             log(file_handles, losses, models.atob, it_val, log_dir=params.log_dir, expt_name=params.expt_name,
-                is_a_binary=params.is_a_binary, is_b_binary=params.is_b_binary)
+                is_a_grayscale=params.is_a_grayscale, is_b_grayscale=params.is_b_grayscale)
 
 if __name__ == '__main__':
     a = sys.argv[1:]
@@ -273,11 +281,10 @@ if __name__ == '__main__':
         'dataset': "/data/lisa/data/cbeckham/textures_v2_90-10.h5", # HDF5 file for training/test data
         'a_ch': 1,  # Number of channels of images A
         'b_ch': 3,  # Number of channels of images B
-        'is_a_binary': True,  # If A is binary, its values will be either 0 or 1
-        'is_b_binary': False,  # If B is binary, the last layer of the atob model is followed by a sigmoid
         'is_a_grayscale': True,  # If A is grayscale, the image will only have one channel
         'is_b_grayscale': False,  # If B is grayscale, the image will only have one channel
         'target_size': 512,  # The size of the images loaded by the iterator. DOES NOT CHANGE THE MODELS
+        'reconstruction_only':False
     })
 
     def print_params():
@@ -286,25 +293,123 @@ if __name__ == '__main__':
             print key, ":", params[key]
     
 
-    def get_iterators():
+    def get_iterators(da=True):
         dataset = h5py.File(params.dataset,"r")
-        imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
-        it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
-        it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_binary=True, is_b_binary=False)
+        if da:
+            imgen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=360, fill_mode="reflect")
+        else:
+            imgen = ImageDataGenerator()
+        it_train = Hdf5Iterator(dataset['xt'], dataset['yt'], params.batch_size, imgen, is_a_grayscale=params.is_a_grayscale, is_b_grayscale=params.is_b_grayscale)
+        it_val = Hdf5Iterator(dataset['xv'], dataset['yv'], params.batch_size, imgen, is_a_grayscale=params.is_a_grayscale, is_b_grayscale=params.is_b_grayscale)
         return it_train, it_val
-            
-    def t7_v2_fix255_desert_alpha100_ed3(mode,seed):
-        """
-        Trying out the desert-only dataset (no validation set yet),
-        with a 1x padded conv u-net.
-        """
+
+
+    def idk4(mode,seed):
         np.random.seed(seed)
         # override params here
-        params.expt_name = "t7_v2_fix255_desert_alpha100_ed3"
+        params.expt_name = "idk4_2_alpha100d"
         params.dataset = "/data/lisa/data/cbeckham/textures_v2_brown500.h5"
+        params.batch_size = 8
+        params.epochs = 1000
+        params.alpha = 100.
+        params.reconstruction_only = False
+        params.lr = 1e-3
+        params.continue_train = True
+        print_params()
+        dopt = Adam(lr=params.lr, beta_1=params.beta_1)
+        from architectures import default_models
+        # Define the generator
+        unet = default_models.g_unet(in_ch=params.a_ch,
+                             out_ch=params.b_ch,
+                             nf=64,
+                             num_padded_conv=2,
+                             batch_size=params.batch_size,
+                             is_grayscale=params.is_b_grayscale)
+        # Define the discriminator
+        d = m.discriminator(params.a_ch, params.b_ch, 1, depths=[1,2,4], bn=True, opt=dopt) #[1,2,4,8,16,24,32,40] 
+        if params.continue_train:
+            print "loading weights..."
+            load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
+        models = model_creation(d, unet, params)
+        it_train, it_val = get_iterators()
+        if mode == "train":
+            train(models, it_train, it_val, params)
+
+
+    def idk4e(mode,seed):
+        np.random.seed(seed)
+        # override params here
+        params.expt_name = "idk4_2_alpha100e"
+        params.dataset = "/data/lisa/data/cbeckham/textures_v2_brown500.h5"
+        params.batch_size = 8
+        params.epochs = 1000
+        params.alpha = 100.
+        params.reconstruction_only = False
+        params.lr = 1e-3
+        print_params()
+        dopt = Adam(lr=params.lr, beta_1=params.beta_1)
+        from architectures import default_models
+        # Define the generator
+        unet = default_models.g_unet(in_ch=params.a_ch,
+                             out_ch=params.b_ch,
+                             nf=64,
+                             num_padded_conv=0,
+                             batch_size=params.batch_size,
+                             is_grayscale=params.is_b_grayscale)
+        # Define the discriminator
+        d = m.discriminator(params.a_ch, params.b_ch, 1, depths=[1,2,4], bn=True, opt=dopt) #[1,2,4,8,16,24,32,40] 
+        if params.continue_train:
+            print "loading weights..."
+            load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
+        models = model_creation(d, unet, params)
+        it_train, it_val = get_iterators()
+        if mode == "train":
+            train(models, it_train, it_val, params)
+
+    def idk4f(mode,seed):
+        np.random.seed(seed)
+        # override params here
+        params.expt_name = "idk4_2_alpha100f_noda"
+        params.dataset = "/data/lisa/data/cbeckham/textures_v2_brown500.h5"
+        params.batch_size = 8
+        params.epochs = 1000
+        params.alpha = 100.
+        params.reconstruction_only = False
+        params.lr = 1e-3
+        print_params()
+        dopt = Adam(lr=params.lr, beta_1=params.beta_1)
+        from architectures import default_models
+        # Define the generator
+        unet = default_models.g_unet(in_ch=params.a_ch,
+                             out_ch=params.b_ch,
+                             nf=64,
+                             num_padded_conv=2,
+                             batch_size=params.batch_size,
+                             is_grayscale=params.is_b_grayscale)
+        # Define the discriminator
+        d = m.discriminator(params.a_ch, params.b_ch, 1, depths=[1,2,4,8,16,32,64,128], bn=True, opt=dopt) #[1,2,4,8,16,24,32,40] 
+        if params.continue_train:
+            print "loading weights..."
+            load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
+        models = model_creation(d, unet, params)
+        it_train, it_val = get_iterators(da=False)
+        if mode == "train":
+            train(models, it_train, it_val, params)
+
+
+            
+    def gmaps1(mode,seed):
+        np.random.seed(seed)
+        # override params here
+        params.expt_name = "gmaps1"
+        params.dataset = "/data/lisatmp4/beckhamc/pix2pix-tensorflow/maps/maps.h5"
         params.batch_size = 16
         params.epochs = 1000
         params.alpha = 100.
+        #params.reconstruction_only = True
+        params.lr = 1e-3
+        params.is_a_binary, params.is_b_binary = False, False
+        params.a_ch, params.b_ch = 3, 3
         print_params()
         dopt = Adam(lr=params.lr, beta_1=params.beta_1)
         from architectures import default_models
@@ -315,7 +420,7 @@ if __name__ == '__main__':
                              batch_size=params.batch_size,
                              is_binary=params.is_b_binary)
         # Define the discriminator
-        d = m.discriminator(params.a_ch, params.b_ch, 32, extra_depth=3, opt=dopt)
+        d = m.discriminator(params.a_ch, params.b_ch, 32, bn=False, opt=dopt)
         if params.continue_train:
             print "loading weights..."
             load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
@@ -323,39 +428,10 @@ if __name__ == '__main__':
         it_train, it_val = get_iterators()
         if mode == "train":
             train(models, it_train, it_val, params)
-        else:
-            raise Exception("unknown mode!")
 
 
-    def t7_v2_fix255_desert_rnun(mode,seed):
-        """
-        Trying out the desert-only dataset (no validation set yet),
-        with Eugene's ResNet-UNet code.
-        """
-        np.random.seed(seed)
-        # override params here
-        params.expt_name = "t7_v2_fix255_desert_rnun"
-        params.dataset = "/data/lisa/data/cbeckham/textures_v2_brown500.h5"
-        params.batch_size = 16
-        params.epochs = 1000
-        print_params()
-        dopt = Adam(lr=params.lr, beta_1=params.beta_1)
-        from architectures import resnet_unet
-        # Define the generator
-        unet = resnet_unet.net1() # TODO: add paramterisation
-        # Define the discriminator
-        d = m.discriminator(params.a_ch, params.b_ch, 32, opt=dopt)
-        if params.continue_train:
-            print "loading weights..."
-            load_weights(unet, d, log_dir=params.log_dir, expt_name=params.expt_name)
-        dataset = h5py.File(params.dataset,"r")
-        models = model_creation(d, unet, params)
-        it_train, it_val = get_iterators()
-        if mode == "train":
-            train(models, it_train, it_val, params)
-        else:
-            raise Exception("unknown mode!")
 
 
-        
+
+            
     locals()[ sys.argv[1] ]( sys.argv[2], int(sys.argv[3]) )
