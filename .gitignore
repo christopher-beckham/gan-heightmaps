@@ -4,3 +4,4 @@ slurm*.out
 *.pdf
 *.pyc
 *.py~
+log/
