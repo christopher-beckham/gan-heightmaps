@@ -57,6 +57,7 @@ class Pix2Pix():
         self.is_b_grayscale = is_b_grayscale
         self.latent_dim = latent_dim
         self.sampler = sampler
+        self.in_shp = in_shp
         self.verbose = verbose
         self.train_mode = train_mode
         # get the networks for the dcgan network
@@ -74,6 +75,7 @@ class Pix2Pix():
         # construct theano stuff for dcgan gen/disc
         dcgan = {'gen':dcgan_gen, 'disc':dcgan_disc}
         dcgan['gen_out'] = get_output(dcgan_gen, Z) # G(z)
+        dcgan['gen_out_det'] = get_output(dcgan_gen, Z, deterministic=True)
         dcgan['disc_out_real'] = get_output(dcgan_disc, X) # D(x)
         dcgan['disc_out_fake'] = get_output(dcgan_disc, dcgan['gen_out']) # D(G(z))
         # construct theano stuff for the p2p gen/disc
@@ -122,11 +124,13 @@ class Pix2Pix():
         train_fn = theano.function([Z,X,Y], [gen_loss_dcgan, disc_loss_dcgan, gen_loss_p2p, recon_loss, disc_loss_p2p], updates=updates, on_unused_input='warn')
         loss_fn = theano.function([Z,X,Y], [gen_loss_dcgan, disc_loss_dcgan, gen_loss_p2p, recon_loss, disc_loss_p2p], on_unused_input='warn')
         gen_fn = theano.function([X], p2p['gen_out'])
-        z_fn = theano.function([Z], dcgan['gen_out'])
+        z_fn = theano.function([Z], dcgan['gen_out']) # NOT DETERMINISTIC, no doesn't use bn avgs
+        z_fn_det = theano.function([Z], dcgan['gen_out_det'])
         self.train_fn = train_fn
         self.loss_fn = loss_fn
         self.gen_fn = gen_fn
         self.z_fn = z_fn
+        self.z_fn_det = z_fn_det
         self.dcgan = dcgan
         self.p2p = p2p
         self.lr = opt_args['learning_rate']
@@ -244,7 +248,46 @@ class Pix2Pix():
         for i in range(num_examples):
             out_processed = convert_to_rgb(out[i], is_grayscale=self.is_a_grayscale)
             imsave(fname="%s/%i.png" % (out_dir,i), arr=out_processed)
-        
+    def dump_interpolated_output(self, zsample1, zsample2, out_name, mode='row', cmap='gray'):
+        """
+        Generated an image showing the interpolation between `zsample1` and `zsample2`,
+          which are samples from the prior p(z).
+        zsample1: latent vector of size (latent_dim,)
+        zsample2: latent vector of size (latent_dim,)
+        out_name: output image, which is an image grid showing the
+          interpolations.
+        mode: if 'row', produce a row of interpolations. If 'matrix',
+          produce a matrix of interpolations.
+        cmap: cmap to use with matplotlib
+        returns: an output image with filename `out_name`.
+        """
+        import image_grid
+        assert mode in ['row', 'matrix']
+        # TODO: currently does not work with non-greyscale images
+        if mode == 'row':
+            grid = np.zeros( (1,6,self.in_shp,self.in_shp), dtype=zsample1.dtype )
+        else:
+            grid = np.zeros( (5,5,self.in_shp,self.in_shp ), dtype=zsample1.dtype )        
+        ctr = 0
+        if mode == 'row':
+            coefs = [0.0, 0.1, 0.3, 0.6, 0.9, 1.0]
+        else:
+            coefs = np.linspace(0,1,25).astype(zsample1.dtype)
+        if mode == 'row':
+            for a in coefs:
+                tmp = self.z_fn_det( (1-a)*zsample1[np.newaxis] + a*zsample2[np.newaxis] )[0][0]
+                #tmp = (tmp - np.min(tmp)) / (np.max(tmp) - np.min(tmp))
+                grid[0][ctr] = tmp    
+                ctr += 1
+        else:
+            for y in range(5):
+                for x in range(5):
+                    a = coefs[ctr]
+                    tmp = self.z_fn_det( (1-a)*zsample1[np.newaxis] + a*zsample2[np.newaxis] )[0][0]
+                    #tmp = (tmp - np.min(tmp)) / (np.max(tmp) - np.min(tmp))
+                    grid[y][x] = tmp
+                    ctr += 1
+        image_grid.write_image_grid(out_name, grid, figsize=(10,10), cmap=cmap)
             
 
 if __name__ == '__main__':
@@ -292,6 +335,7 @@ if __name__ == '__main__':
             model.train(it_train, it_val, batch_size=bs, num_epochs=1000, out_dir="output/%s" % name, model_dir="models/%s" % name)
 
     def test1_nobn(mode):
+        assert mode in ["train", "interp"]
         from architectures import p2p, dcgan
         # this does u(0,1) sampling, though originally we used N(0,1) i think
         model = Pix2Pix(
@@ -317,6 +361,13 @@ if __name__ == '__main__':
         name = "test1_repeatnod_fixp2p_nobn"
         if mode == "train":
             model.train(it_train, it_val, batch_size=bs, num_epochs=1000, out_dir="output/%s" % name, model_dir="models/%s" % name)
+        elif mode == "interp":
+            model.load_model("models/%s/600.model.bak" % name)
+            zs = model.sampler(2, model.latent_dim)
+            z1, z2 = floatX(zs[0]), floatX(zs[1])
+            model.dump_interpolated_output(z1, z2, "/tmp/test.png", mode='matrix')
+            import pdb
+            pdb.set_trace()
 
             
     def test2(mode):
