@@ -53,9 +53,9 @@ Here are some heightmaps generated at roughly ~590 epochs for the DCGAN part of 
 
 <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/12.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/17.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/16.png" width="256" height="256" />
 
-Here is a linear interpolation between two of the resulting heightmaps (TODO: this is from a older/crappier model, so I need to update this):
+Here is a linear interpolation between two of the resulting heightmaps:
 
-<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/dev/lasagne/md/interp3_mat.png" width="800" />
+<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/dev/lasagne/md/interp2.png" width="800" />
 
 ## pix2pix
 
