@@ -10,6 +10,27 @@ from keras.preprocessing.image import ImageDataGenerator
 import os
 import sys
 
+# custom layers
+
+def _remove_trainable(layer):
+    for key in layer.params:
+        layer.params[key].remove('trainable')
+
+class BilinearUpsample2DLayer(Layer):
+    def __init__(self, incoming, factor, **kwargs):
+        super(BilinearUpsample2DLayer, self).__init__(incoming, **kwargs)
+        self.factor = factor
+
+    def get_output_shape_for(self, input_shape):
+        return input_shape[0:2] + (input_shape[2]*self.factor, input_shape[3]*self.factor)
+
+    def get_output_for(self, input, **kwargs):
+        return theano.tensor.nnet.abstract_conv.bilinear_upsampling(
+            input, 
+            self.factor, 
+            batch_size=self.input_shape[0],
+            num_input_channels=self.input_shape[1])
+        
 def Convolution(layer, f, k=3, s=2, border_mode='same', **kwargs):
     return Conv2DLayer(layer, num_filters=f, filter_size=(k,k), stride=(s,s), pad=border_mode, nonlinearity=linear)
 
@@ -18,7 +39,6 @@ def Deconvolution(layer, f, k=2, s=2, **kwargs):
 
 def concatenate_layers(layers, **kwargs):
     return ConcatLayer(layers, axis=1)
-
 
 def g_unet_256(in_shp, is_a_grayscale, is_b_grayscale, nf=64, act=tanh, dropout=0.):
     """
@@ -117,7 +137,7 @@ def g_unet_256(in_shp, is_a_grayscale, is_b_grayscale, nf=64, act=tanh, dropout=
 
 
 
-def g_unet(in_shp, is_a_grayscale, is_b_grayscale, nf=64, act=tanh, dropout=False, num_repeats=0):
+def g_unet(in_shp, is_a_grayscale, is_b_grayscale, nf=64, act=tanh, dropout=False, num_repeats=0, bilinear_upsample=False):
     """
     The UNet in Costa's pix2pix implementation with some added arguments.
     is_a_grayscale:
@@ -196,41 +216,69 @@ def g_unet(in_shp, is_a_grayscale, is_b_grayscale, nf=64, act=tanh, dropout=Fals
     x = concatenate_layers([dconv1, conv8])
     x = NonlinearityLayer(x, nonlinearity=leaky_rectify)
     # nf*(8 + 8) x 2 x 2
-    dconv2 = Deconvolution(x, nf * 8)
+    if not bilinear_upsample:
+        dconv2 = Deconvolution(x, nf * 8)
+    else:
+        dconv2 = BilinearUpsample2DLayer(x, 2)
+        dconv2 = Convolution(dconv2, nf*8, s=1)
     dconv2 = BatchNormLayer(dconv2)
     if dropout:
         dconv2 = DropoutLayer(dconv2, p=0.5)
     x = concatenate_layers([dconv2, conv7])
     x = NonlinearityLayer(x, leaky_rectify)
     # nf*(8 + 8) x 4 x 4
-    dconv3 = Deconvolution(x, nf * 8)
+    if not bilinear_upsample:
+        dconv3 = Deconvolution(x, nf * 8)
+    else:
+        dconv3 = BilinearUpsample2DLayer(x, 2)
+        dconv3 = Convolution(dconv3, nf*8, s=1)
     dconv3 = BatchNormLayer(dconv3)
     if dropout:
         dconv3 = DropoutLayer(dconv3, p=0.5)
     x = concatenate_layers([dconv3, conv6])
     x = NonlinearityLayer(x, leaky_rectify)
     # nf*(8 + 8) x 8 x 8
-    dconv4 = Deconvolution(x, nf * 8)
+    if not bilinear_upsample:
+        dconv4 = Deconvolution(x, nf * 8)
+    else:
+        dconv4 = BilinearUpsample2DLayer(x, 2)
+        dconv4 = Convolution(dconv4, nf*8, s=1)
     dconv4 = BatchNormLayer(dconv4)
     x = concatenate_layers([dconv4, conv5])
     x = NonlinearityLayer(x, leaky_rectify)
     # nf*(8 + 8) x 16 x 16
-    dconv5 = Deconvolution(x, nf * 8)
+    if not bilinear_upsample:
+        dconv5 = Deconvolution(x, nf * 8)
+    else:
+        dconv5 = BilinearUpsample2DLayer(x, 2)
+        dconv5 = Convolution(dconv5, nf*8, s=1)        
     dconv5 = BatchNormLayer(dconv5)
     x = concatenate_layers([dconv5, conv4])
     x = NonlinearityLayer(x, leaky_rectify)
     # nf*(8 + 8) x 32 x 32
-    dconv6 = Deconvolution(x, nf * 4)
+    if not bilinear_upsample:
+        dconv6 = Deconvolution(x, nf * 4)
+    else:
+        dconv6 = BilinearUpsample2DLayer(x, 2)
+        dconv6 = Convolution(dconv6, nf*4, s=1)                
     dconv6 = BatchNormLayer(dconv6)
     x = concatenate_layers([dconv6, conv3])
     x = NonlinearityLayer(x, leaky_rectify)
     # nf*(4 + 4) x 64 x 64
-    dconv7 = Deconvolution(x, nf * 2)
+    if not bilinear_upsample:
+        dconv7 = Deconvolution(x, nf * 2)
+    else:
+        dconv7 = BilinearUpsample2DLayer(x, 2)
+        dconv7 = Convolution(dconv7, nf*2, s=1)
     dconv7 = BatchNormLayer(dconv7)
     x = concatenate_layers([dconv7, conv2])
     x = NonlinearityLayer(x, leaky_rectify)
     # nf*(2 + 2) x 128 x 128
-    dconv8 = Deconvolution(x, nf)
+    if not bilinear_upsample:
+        dconv8 = Deconvolution(x, nf)
+    else:
+        dconv8 = BilinearUpsample2DLayer(x, 2)
+        dconv8 = Convolution(dconv8, nf, s=1)
     dconv8 = BatchNormLayer(dconv8)
     x = concatenate_layers([dconv8, conv1])
     x = NonlinearityLayer(x, leaky_rectify)
