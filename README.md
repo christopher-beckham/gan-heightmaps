@@ -27,13 +27,13 @@ crops from the original NASA images (of size 21600px x 10800px), as seen in the 
 
 <!-- <p align="center"> -->
 <a href="https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73934/gebco_08_rev_elev_21600x10800.png">
-<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/dev/lasagne/md/earth_heightmap.png" />
+<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/master/md/earth_heightmap.png" />
 </a>
 <!-- </p> -->
 
 <!-- <p align="center"> -->
 <a href="https://eoimages.gsfc.nasa.gov/images/imagerecords/74000/74218/world.200412.3x21600x10800.jpg">
-<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/dev/lasagne/md/earth_texture.jpg" />
+<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/master/md/earth_texture.jpg" />
 </a>
 <!-- </p> -->
 
@@ -49,9 +49,9 @@ paper).
 
 Here are some heightmaps generated at roughly ~590 epochs for the DCGAN part of the network.
 
-<img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/0.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/3.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/14.png" width="256" height="256" />
+<img src="https://github.com/christopher-beckham/gan-heightmaps/blob/master/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/0.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/master/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/3.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/master/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/14.png" width="256" height="256" />
 
-<img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/12.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/17.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/16.png" width="256" height="256" />
+<img src="https://github.com/christopher-beckham/gan-heightmaps/blob/master/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/12.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/master/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/17.png" width="256" height="256" /> <img src="https://github.com/christopher-beckham/gan-heightmaps/blob/master/output/test1_repeatnod_fixp2p_nobn/dump_a_bakup_593ish/16.png" width="256" height="256" />
 
 Click [here](http://www.youtube.com/watch?v=CvttVAhhCAs) to see a video showing linear interpolations between the 100 different randomly generated heightmaps (and their corresponding textures):
 
@@ -60,14 +60,14 @@ Click [here](http://www.youtube.com/watch?v=CvttVAhhCAs) to see a video showing 
 Generation of texture maps from ground truth heightmaps ~600 epochs in (generating texture maps from generated heightmaps performed 
 similarly):
 
-<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/dev/lasagne/output/test1_repeatnod_fixp2p_nobn/out_600.png" width="800" />
+<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/master/output/test1_repeatnod_fixp2p_nobn/out_600.png" width="800" />
 
 (TODO: texture outputs can be patchy, probably because the discriminator is actually a PatchGAN. I will need to run some experiments using
 a 1x1 discriminator instead.)
 
 Here is one of the generated heightmaps + corresponding texture map rendered in Unity:
 
-<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/dev/lasagne/md/unity_render_24.png" width="800" />
+<img src="https://github.com/christopher-beckham/gan-heightmaps/raw/master/md/unity_render_24.png" width="800" />
 
 ## Running the code
 
