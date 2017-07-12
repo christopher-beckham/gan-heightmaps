@@ -9,8 +9,9 @@ from lasagne.objectives import *
 from keras.preprocessing.image import ImageDataGenerator
 import os
 import sys
+from layers import BilinearUpsample2DLayer
 
-def default_generator(latent_dim, is_a_grayscale, nch=512, h=5, initial_size=4, final_size=512, div=[2,2,4,4,8,8,16], num_repeats=0, dropout_p=0.):
+def default_generator(latent_dim, is_a_grayscale, nch=512, h=5, initial_size=4, final_size=512, div=[2,2,4,4,8,8,16], num_repeats=0, dropout_p=0., bilinear_upsample=False):
     layer = InputLayer((None, latent_dim))
     layer = DenseLayer(layer, num_units=nch*initial_size*initial_size, nonlinearity=linear)
     layer = BatchNormLayer(layer)
@@ -23,7 +24,11 @@ def default_generator(latent_dim, is_a_grayscale, nch=512, h=5, initial_size=4, 
             layer = NonlinearityLayer(layer, nonlinearity=LeakyRectify(0.2))
             if dropout_p > 0.:
                 layer = DropoutLayer(layer, p=dropout_p)
-        layer = Upscale2DLayer(layer, scale_factor=2)
+        if bilinear_upsample:
+            layer = BilinearUpsample2DLayer(layer, factor=2)
+        else:
+            # not consistent with p2p, since that uses deconv to upsample (if no bilinear upsample)
+            layer = Upscale2DLayer(layer, scale_factor=2)
     layer = Conv2DLayer(layer, num_filters=1 if is_a_grayscale else 3, filter_size=h, pad='same', nonlinearity=sigmoid)
     return layer
 

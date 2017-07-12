@@ -9,27 +9,13 @@ from lasagne.objectives import *
 from keras.preprocessing.image import ImageDataGenerator
 import os
 import sys
+from layers import BilinearUpsample2DLayer
 
 # custom layers
 
 def _remove_trainable(layer):
     for key in layer.params:
         layer.params[key].remove('trainable')
-
-class BilinearUpsample2DLayer(Layer):
-    def __init__(self, incoming, factor, **kwargs):
-        super(BilinearUpsample2DLayer, self).__init__(incoming, **kwargs)
-        self.factor = factor
-
-    def get_output_shape_for(self, input_shape):
-        return input_shape[0:2] + (input_shape[2]*self.factor, input_shape[3]*self.factor)
-
-    def get_output_for(self, input, **kwargs):
-        return theano.tensor.nnet.abstract_conv.bilinear_upsampling(
-            input, 
-            self.factor, 
-            batch_size=self.input_shape[0],
-            num_input_channels=self.input_shape[1])
         
 def Convolution(layer, f, k=3, s=2, border_mode='same', **kwargs):
     return Conv2DLayer(layer, num_filters=f, filter_size=(k,k), stride=(s,s), pad=border_mode, nonlinearity=linear)
